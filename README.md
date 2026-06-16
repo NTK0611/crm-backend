@@ -22,7 +22,7 @@ A Realtime CRM / Customer Support backend built with Node.js and TypeScript.
 ```
 src/
 ├── common/
-│   ├── filters/          # Global exception filter
+│   ├── filters/          
 │   └── interceptors/     # Response shape interceptor
 ├── health/               # GET /api/health
 ├── prisma/               # PrismaService (global)
