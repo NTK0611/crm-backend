@@ -41,12 +41,12 @@ INSERT INTO user_roles (user_id, role_id, assigned_at) VALUES
   ('10000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000002', NOW());  -- staff3 -> STAFF
 
 -- ─── 4. Customers ─────────────────────────────────────────
-INSERT INTO customers (id, name, email, phone, address, created_at, updated_at) VALUES
-  ('20000000-0000-0000-0000-000000000001', 'Pham Thi Lan',    'lan.pham@gmail.com',    '0901234567', '12 Nguyen Hue, Q1, HCM',       NOW(), NOW()),
-  ('20000000-0000-0000-0000-000000000002', 'Hoang Van Kiet',  'kiet.hoang@gmail.com',  '0912345678', '45 Le Loi, Q3, HCM',            NOW(), NOW()),
-  ('20000000-0000-0000-0000-000000000003', 'Nguyen Thi Mai',  'mai.nguyen@gmail.com',  '0923456789', '78 Tran Hung Dao, Hoan Kiem, HN', NOW(), NOW()),
-  ('20000000-0000-0000-0000-000000000004', 'Bui Quoc Tuan',   'tuan.bui@gmail.com',    '0934567890', '23 Hoang Dieu, Hai Chau, DN',   NOW(), NOW()),
-  ('20000000-0000-0000-0000-000000000005', 'Do Thi Huong',    'huong.do@gmail.com',    '0945678901', '56 Phan Chu Trinh, Hue',        NOW(), NOW());
+INSERT INTO customers (id, name, email, phone, address, status, created_at, updated_at) VALUES
+  ('20000000-0000-0000-0000-000000000001', 'Pham Thi Lan',   'lan.pham@gmail.com',  '0901234567', '12 Nguyen Hue, Q1, HCM', 'ACTIVE',   NOW(), NOW()),
+  ('20000000-0000-0000-0000-000000000002', 'Hoang Van Kiet', 'kiet.hoang@gmail.com','0912345678', '45 Le Loi, Q3, HCM',     'ACTIVE',   NOW(), NOW()),
+  ('20000000-0000-0000-0000-000000000003', 'Nguyen Thi Mai', 'mai.nguyen@gmail.com','0923456789', '78 Tran Hung Dao, HN',   'INACTIVE', NOW(), NOW()),
+  ('20000000-0000-0000-0000-000000000004', 'Bui Quoc Tuan',  'tuan.bui@gmail.com',  '0934567890', '23 Hoang Dieu, DN',      'ACTIVE',   NOW(), NOW()),
+  ('20000000-0000-0000-0000-000000000005', 'Do Thi Huong',   'huong.do@gmail.com',  '0945678901', '56 Phan Chu Trinh, Hue', 'BLOCKED',  NOW(), NOW());
 
 -- ─── 5. Conversations ─────────────────────────────────────
 INSERT INTO conversations (id, customer_id, status, note, created_at, updated_at) VALUES
