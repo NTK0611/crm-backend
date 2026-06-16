@@ -1,4 +1,5 @@
 
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -6,4 +7,219 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+//  Enums 
+
+enum ConversationStatus {
+  OPEN
+  ASSIGNED
+  PENDING
+  CLOSED
+}
+
+enum SenderType {
+  USER
+  CUSTOMER
+}
+
+enum WebhookStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+}
+
+enum RoleName {
+  ADMIN
+  STAFF
+  CUSTOMER
+}
+
+//  Models 
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  fullName     String   @map("full_name")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  userRoles           UserRole[]
+  conversationMembers ConversationMember[]
+  assignedTo          Assignment[]         @relation("AssignedTo")
+  assignedBy          Assignment[]         @relation("AssignedBy")
+  notifications       Notification[]
+  activityLogs        ActivityLog[]
+
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid())
+  name        RoleName @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  userRoles UserRole[]
+
+  @@map("roles")
+}
+
+model UserRole {
+  userId     String   @map("user_id")
+  roleId     String   @map("role_id")
+  assignedAt DateTime @default(now()) @map("assigned_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+}
+
+model Customer {
+  id        String   @id @default(uuid())
+  name      String
+  email     String?  @unique
+  phone     String?  @unique
+  address   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  conversations Conversation[]
+
+  @@map("customers")
+}
+
+model Conversation {
+  id         String             @id @default(uuid())
+  customerId String             @map("customer_id")
+  status     ConversationStatus @default(OPEN)
+  note       String?
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  customer            Customer             @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  conversationMembers ConversationMember[]
+  messages            Message[]
+  assignments         Assignment[]
+  activityLogs        ActivityLog[]
+
+  @@index([customerId])
+  @@index([status])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  userId         String   @map("user_id")
+  joinedAt       DateTime @default(now()) @map("joined_at")
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id             String     @id @default(uuid())
+  conversationId String     @map("conversation_id")
+  senderId       String     @map("sender_id")
+  senderType     SenderType @map("sender_type")
+  content        String
+  sentAt         DateTime   @default(now()) @map("sent_at")
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  attachments  Attachment[]
+
+  @@index([conversationId])
+  @@map("messages")
+}
+
+model Assignment {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  assignedToId   String    @map("assigned_to")
+  assignedById   String    @map("assigned_by")
+  assignedAt     DateTime  @default(now()) @map("assigned_at")
+  unassignedAt   DateTime? @map("unassigned_at")
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  assignedTo   User         @relation("AssignedTo", fields: [assignedToId], references: [id], onDelete: Restrict)
+  assignedBy   User         @relation("AssignedBy", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  @@index([conversationId])
+  @@map("assignments")
+}
+
+model Notification {
+  id          String   @id @default(uuid())
+  userId      String   @map("user_id")
+  type        String
+  content     String
+  isRead      Boolean  @default(false) @map("is_read")
+  referenceId String?  @map("reference_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model WebhookEvent {
+  id          String        @id @default(uuid())
+  eventId     String        @unique @map("event_id")
+  source      String
+  payload     Json
+  status      WebhookStatus @default(RECEIVED)
+  receivedAt  DateTime      @default(now()) @map("received_at")
+  processedAt DateTime?     @map("processed_at")
+
+  @@index([eventId])
+  @@map("webhook_events")
+}
+
+model Attachment {
+  id        String   @id @default(uuid())
+  messageId String   @map("message_id")
+  fileName  String   @map("file_name")
+  fileUrl   String   @map("file_url")
+  fileType  String   @map("file_type")
+  fileSize  Int      @map("file_size")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("attachments")
+}
+
+model ActivityLog {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  userId         String   @map("user_id")
+  action         String
+  meta           Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // Relations
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([conversationId])
+  @@map("activity_logs")
 }
