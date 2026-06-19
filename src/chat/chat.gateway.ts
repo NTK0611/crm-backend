@@ -6,71 +6,84 @@ import {
   ConnectedSocket,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
 } from '@nestjs/websockets';
 import { Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import { Server, Socket } from 'socket.io';
-import { PrismaService } from '../prisma/prisma.service';
-import { SenderType } from '@prisma/client';
-
+import { ConversationsService } from '../conversations/conversations.service';
+import { NotFoundException, ForbiddenException } from '@nestjs/common';
 @WebSocketGateway({
   cors: { origin: '*' },
 })
-export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class ChatGateway implements OnGatewayInit,OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
   private readonly logger = new Logger(ChatGateway.name);
 
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
-    private readonly configService: ConfigService,
-  ) {}
+ constructor(
+  private readonly conversationsService: ConversationsService,
+  private readonly jwtService: JwtService,
+  private readonly configService: ConfigService,
+) {}
 
   // ─── Lifecycle ───────────────────────────────────────────────────
-
-  async handleConnection(client: Socket) {
+     afterInit(server: Server) {
+  server.use(async (socket, next) => {
     try {
-      const token = client.handshake.auth?.token || client.handshake.query?.token as string;
+      const token =
+        socket.handshake.auth?.token ||
+        (socket.handshake.query?.token as string);
+
       if (!token) {
-        this.logger.warn(`Client ${client.id} disconnected: no token`);
-        client.disconnect();
-        return;
+        return next(new Error('No token provided'));
       }
+
 
       const payload = this.jwtService.verify(token, {
         secret: this.configService.get<string>('JWT_SECRET'),
       });
 
-      const user = await this.prisma.user.findUnique({
-        where: { id: payload.sub },
-        select: {
-          id: true,
-          email: true,
-          fullName: true,
-          isActive: true,
-          userRoles: {
-            select: { role: { select: { name: true } } },
-          },
-        },
-      });
+
+      const user = await this.conversationsService.findUserById(
+        payload.sub,
+      );
+
 
       if (!user || !user.isActive) {
-        this.logger.warn(`Client ${client.id} disconnected: user not found or inactive`);
-        client.disconnect();
-        return;
+        return next(new Error('User not found or inactive'));
       }
 
-      client.data.user = user;
-      this.logger.log(`Client connected: ${client.id} user: ${user.email}`);
 
-    } catch {
-      this.logger.warn(`Client ${client.id} disconnected: invalid token`);
-      client.disconnect();
+      // attach authenticated user
+      socket.data.user = user;
+
+
+      this.logger.log(
+        `Socket authenticated: ${socket.id} user: ${user.email}`,
+      );
+
+
+      // allow connection
+      next();
+
+    } catch (error) {
+
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn(`Socket authentication failed: ${message}`);
+      next(new Error('Invalid token'));
     }
+  });
   }
+  handleConnection(client: Socket) {
+      const user = client.data.user;
+
+      this.logger.log(
+      `Client connected: ${client.id} user: ${user.email}`,
+      );
+     }
 
   handleDisconnect(client: Socket) {
     const user = client.data?.user;
@@ -82,33 +95,22 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   // ─── Private Helper ───────────────────────────────────────────────
 
   private async validateMembership(
-    client: Socket,
-    conversationId: string,
-    userId: string,
-  ): Promise<boolean> {
-    const conversation = await this.prisma.conversation.findUnique({
-      where: { id: conversationId },
-      include: {
-        conversationMembers: { select: { userId: true } },
-      },
-    });
-
-    if (!conversation) {
-      client.emit('error', { message: 'Conversation not found' });
-      return false;
-    }
-
-    const isMember = conversation.conversationMembers.some(
-      (m) => m.userId === userId,
-    );
-
-    if (!isMember) {
-      client.emit('error', { message: 'You are not a member of this conversation' });
-      return false;
-    }
-
+  client: Socket,
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  try {
+    await this.conversationsService.checkMembership(conversationId, userId);
     return true;
+  } catch (e) {
+    if (e instanceof NotFoundException) {
+      client.emit('error', { message: 'Conversation not found' });
+    } else {
+      client.emit('error', { message: 'You are not a member of this conversation' });
+    }
+    return false;
   }
+}
 
   // ─── Join Room ───────────────────────────────────────────────────
 
@@ -170,14 +172,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
     if (!isValid) return;
 
-    const message = await this.prisma.message.create({
-      data: {
-        conversationId: data.conversationId,
-        senderId: user.id,
-        senderType: SenderType.USER,
-        content: data.content.trim(),
-      },
-    });
+    const message = await this.conversationsService.createMessage(
+     data.conversationId,
+    { content: data.content.trim() },
+    user.id,
+     );
 
     this.logger.log(
       `Message saved: ${message.id} in conversation: ${data.conversationId}`,
