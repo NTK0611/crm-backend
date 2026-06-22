@@ -7,7 +7,8 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { ConversationsModule } from './conversations/conversations.module';
 import { ChatModule } from './chat/chat.module';
-
+import { NotificationsModule } from './notifications/notifications.module';
+import { WebhooksModule } from './webhooks/webhooks.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -21,6 +22,8 @@ import { ChatModule } from './chat/chat.module';
     AuthModule,
     ConversationsModule,
     ChatModule,
+    NotificationsModule,
+    WebhooksModule,
   ],
 })
 export class AppModule {}

@@ -10,12 +10,15 @@ import { CreateMessageDto } from './dto/create-message.dto';
 import { AssignConversationDto } from './dto/assign-conversation.dto';
 import { SenderType } from '@prisma/client';
 import { validateTransition } from './validate-transition';
-
+import { NotificationsService } from '../notifications/notifications.service';
 @Injectable()
 export class ConversationsService {
   private readonly logger = new Logger(ConversationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   // ─── Private Helper ───────────────────────────────────────────────
 
@@ -442,21 +445,29 @@ export class ConversationsService {
   // ─── Messages ─────────────────────────────────────────────────────
 
   async createMessage(conversationId: string, dto: CreateMessageDto, userId: string) {
-    await this.checkMembership(conversationId, userId);
+  await this.checkMembership(conversationId, userId);
 
-    const message = await this.prisma.message.create({
-      data: {
-        conversationId,
-        senderId: userId,
-        senderType: SenderType.USER,
-        content: dto.content,
-      },
-    });
+  const message = await this.prisma.message.create({
+    data: {
+      conversationId,
+      senderId: userId,
+      senderType: SenderType.USER,
+      content: dto.content,
+    },
+  });
 
-    this.logger.log(`Message sent in conversation: ${conversationId} by user: ${userId}`);
+  this.logger.log(`Message sent in conversation: ${conversationId} by user: ${userId}`);
 
-    return message;
-  }
+  // Trigger notifications for all other members of this conversation
+    await this.notificationsService.createForMessage(
+    conversationId,
+    userId,
+    message.id,
+    `New message in conversation: ${dto.content.substring(0, 50)}`,
+    );
+
+      return message;
+    }
 
   async findMessages(conversationId: string, userId: string) {
     await this.checkMembership(conversationId, userId);
