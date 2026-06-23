@@ -216,14 +216,14 @@ model Attachment {
 
 model ActivityLog {
   id             String   @id @default(uuid())
-  conversationId String   @map("conversation_id")
+  conversationId String?   @map("conversation_id")
   userId         String   @map("user_id")
   action         String
   meta           Json?
   createdAt      DateTime @default(now()) @map("created_at")
 
   // Relations
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversation Conversation? @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   user         User         @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([conversationId])

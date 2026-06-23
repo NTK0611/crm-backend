@@ -15,7 +15,7 @@ export class CustomersService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(dto: CreateCustomerDto) {
+  async create(dto: CreateCustomerDto, userId: string) {
     // Check duplicate email
     if (dto.email) {
       const existingEmail = await this.prisma.customer.findUnique({
@@ -44,15 +44,13 @@ export class CustomersService {
 
     // Activity log
     await this.prisma.activityLog.create({
-      data: {
-        conversationId: '00000000-0000-0000-0000-000000000000',
-        userId: '00000000-0000-0000-0000-000000000000',
+       data: {
+        conversationId: null,
+        userId,
         action: 'CUSTOMER_CREATED',
         meta: { customerId: customer.id, name: customer.name },
       },
-    }).catch(() => {
-      // Don't fail if activity log fails
-    });
+    })
 
     return customer;
   }

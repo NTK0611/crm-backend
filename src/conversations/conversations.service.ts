@@ -15,8 +15,34 @@ export class ConversationsService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  // ─── Private Helper ───────────────────────────────────────────────
+
+  public async checkMembership(conversationId: string, userId: string): Promise<void> {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+    });
+
+    if (!conversation) {
+      throw new NotFoundException(`Conversation with id ${conversationId} not found`);
+    }
+
+    const member = await this.prisma.conversationMember.findUnique({
+      where: {
+        conversationId_userId: {
+          conversationId,
+          userId,
+        },
+      },
+    });
+
+    if (!member) {
+      throw new ForbiddenException('You are not a member of this conversation');
+    }
+  }
+
+  // ─── Conversations ────────────────────────────────────────────────
+
   async create(dto: CreateConversationDto, userId: string) {
-    // Check customer exists
     const customer = await this.prisma.customer.findUnique({
       where: { id: dto.customerId },
     });
@@ -25,7 +51,6 @@ export class ConversationsService {
       throw new NotFoundException(`Customer with id ${dto.customerId} not found`);
     }
 
-    // Create conversation + add creator as member in one transaction
     const conversation = await this.prisma.$transaction(async (tx) => {
       const created = await tx.conversation.create({
         data: {
@@ -71,6 +96,8 @@ export class ConversationsService {
   }
 
   async findOne(id: string, userId: string) {
+    await this.checkMembership(id, userId);
+
     const conversation = await this.prisma.conversation.findUnique({
       where: { id },
       include: {
@@ -83,25 +110,13 @@ export class ConversationsService {
       },
     });
 
-    if (!conversation) {
-      throw new NotFoundException(`Conversation with id ${id} not found`);
-    }
-
-    // Check membership
-    const isMember = conversation.conversationMembers.some(
-      (m) => m.userId === userId,
-    );
-
-    if (!isMember) {
-      throw new ForbiddenException('You are not a member of this conversation');
-    }
-
     return conversation;
   }
 
+  // ─── Messages ─────────────────────────────────────────────────────
+
   async createMessage(conversationId: string, dto: CreateMessageDto, userId: string) {
-    // findOne already checks existence + membership
-    await this.findOne(conversationId, userId);
+    await this.checkMembership(conversationId, userId);
 
     const message = await this.prisma.message.create({
       data: {
@@ -118,8 +133,7 @@ export class ConversationsService {
   }
 
   async findMessages(conversationId: string, userId: string) {
-    // findOne already checks existence + membership
-    await this.findOne(conversationId, userId);
+    await this.checkMembership(conversationId, userId);
 
     const messages = await this.prisma.message.findMany({
       where: { conversationId },
@@ -128,4 +142,18 @@ export class ConversationsService {
 
     return messages;
   }
+   async findUserById(id: string) {
+  return this.prisma.user.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      email: true,
+      fullName: true,
+      isActive: true,
+      userRoles: {
+        select: { role: { select: { name: true } } },
+      },
+    },
+  });
+ }
 }
