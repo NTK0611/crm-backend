@@ -126,13 +126,7 @@ export class ConversationsService {
     throw new NotFoundException('Conversation not found');
   }
 
-  // ─── Role-based assignment restriction ────────────────────────────
-  // Fetch the current user's roles to enforce the business rule:
-  // - ADMIN can assign to anyone (dto.assignedTo can be any user id)
-  // - STAFF can only self-assign (dto.assignedTo must equal their own id)
-  // This check happens AFTER the conversation existence check but BEFORE
-  // the transition validation — no point validating the transition if the
-  // user isn't even allowed to assign at all.
+  // ─── Validate calling user's role ─────────────────────────────────
   const currentUser = await this.prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -142,20 +136,47 @@ export class ConversationsService {
     },
   });
 
-  const roles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
-  const isAdmin = roles.includes('ADMIN');
-  const isStaff = roles.includes('STAFF');
+  const callerRoles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
+  const isAdmin = callerRoles.includes('ADMIN');
+  const isStaff = callerRoles.includes('STAFF');
 
   if (isStaff && !isAdmin && dto.assignedTo !== userId) {
-    // STAFF trying to assign to someone else — block it
+    throw new ForbiddenException('STAFF members can only self-assign conversations');
+  }
+
+  // ─── Validate target user exists, is active, has STAFF or ADMIN role ──
+  // This prevents assigning a conversation to a CUSTOMER or a random UUID.
+  
+  const targetUser = await this.prisma.user.findUnique({
+    where: { id: dto.assignedTo },
+    select: {
+      id: true,
+      isActive: true,
+      userRoles: {
+        select: { role: { select: { name: true } } },
+      },
+    },
+  });
+
+  if (!targetUser) {
+    throw new NotFoundException(`User with id ${dto.assignedTo} not found`);
+  }
+
+  if (!targetUser.isActive) {
+    throw new ForbiddenException(`User with id ${dto.assignedTo} is not active`);
+  }
+
+  const targetRoles = targetUser.userRoles.map((ur) => ur.role.name);
+  const targetIsStaffOrAdmin =
+    targetRoles.includes('STAFF') || targetRoles.includes('ADMIN');
+
+  if (!targetIsStaffOrAdmin) {
     throw new ForbiddenException(
-      'STAFF members can only self-assign conversations',
+      `User with id ${dto.assignedTo} does not have STAFF or ADMIN role`,
     );
   }
 
   // ─── Validate status transition ────────────────────────────────────
-  // Only runs if the role check above passed.
-  // Throws 409 if current status is not in ALLOWED_TRANSITIONS['assign']
   const newStatus = validateTransition(conversation.status, 'assign');
 
   const updatedConversation = await this.prisma.$transaction(async (tx) => {
@@ -169,6 +190,22 @@ export class ConversationsService {
         conversationId,
         assignedToId: dto.assignedTo,
         assignedById: userId,
+      },
+    });
+
+    // ─── Add assigned staff to conversation_members if not already a member ──
+   
+    await tx.conversationMember.upsert({
+      where: {
+        conversationId_userId: {
+          conversationId,
+          userId: dto.assignedTo,
+        },
+      },
+      update: {},  // already a member — do nothing
+      create: {
+        conversationId,
+        userId: dto.assignedTo,
       },
     });
 
@@ -236,84 +273,137 @@ export class ConversationsService {
 }
 
   async unassign(conversationId: string, userId: string) {
-    const conversation = await this.prisma.conversation.findUnique({
-      where: { id: conversationId },
+  const conversation = await this.prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
+
+  if (!conversation) {
+    throw new NotFoundException('Conversation not found');
+  }
+
+  // ─── STAFF restriction ─────────────────────────────────────────────
+  // STAFF can only unassign conversations where they are the active assignee.
+  // ADMIN can unassign any conversation.
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      userRoles: { select: { role: { select: { name: true } } } },
+    },
+  });
+
+  const roles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
+  const isAdmin = roles.includes('ADMIN');
+
+  if (!isAdmin) {
+    // Not an admin — check they are the active assignee
+    const activeAssignment = await this.prisma.assignment.findFirst({
+      where: { conversationId, unassignedAt: null },
+      orderBy: { assignedAt: 'desc' },
     });
 
-    if (!conversation) {
-      throw new NotFoundException('Conversation not found');
+    if (!activeAssignment || activeAssignment.assignedToId !== userId) {
+      throw new ForbiddenException(
+        'STAFF can only unassign conversations assigned to themselves',
+      );
+    }
+  }
+
+  const newStatus = validateTransition(conversation.status, 'unassign');
+
+  const updatedConversation = await this.prisma.$transaction(async (tx) => {
+    const updated = await tx.conversation.update({
+      where: { id: conversationId },
+      data: { status: newStatus },
+    });
+
+    const activeAssignment = await tx.assignment.findFirst({
+      where: { conversationId, unassignedAt: null },
+      orderBy: { assignedAt: 'desc' },
+    });
+
+    if (activeAssignment) {
+      await tx.assignment.update({
+        where: { id: activeAssignment.id },
+        data: { unassignedAt: new Date() },
+      });
     }
 
-    const newStatus = validateTransition(conversation.status, 'unassign');
-
-    const updatedConversation = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.conversation.update({
-        where: { id: conversationId },
-        data: { status: newStatus },
-      });
-
-      const activeAssignment = await tx.assignment.findFirst({
-        where: { conversationId, unassignedAt: null },
-        orderBy: { assignedAt: 'desc' },
-      });
-
-      if (activeAssignment) {
-        await tx.assignment.update({
-          where: { id: activeAssignment.id },
-          data: { unassignedAt: new Date() },
-        });
-      }
-
-      await tx.activityLog.create({
-        data: {
-          conversationId,
-          userId,
-          action: 'CONVERSATION_UNASSIGNED',
-          meta: { previouslyAssignedTo: activeAssignment?.assignedToId ?? null },
-        },
-      });
-
-      return updated;
+    await tx.activityLog.create({
+      data: {
+        conversationId,
+        userId,
+        action: 'CONVERSATION_UNASSIGNED',
+        meta: { previouslyAssignedTo: activeAssignment?.assignedToId ?? null },
+      },
     });
 
-    this.logger.log(`Conversation ${conversationId} unassigned by ${userId}`);
+    return updated;
+  });
 
-    return updatedConversation;
-  }
+  this.logger.log(`Conversation ${conversationId} unassigned by ${userId}`);
+
+  return updatedConversation;
+}
 
   async close(conversationId: string, userId: string) {
-    const conversation = await this.prisma.conversation.findUnique({
-      where: { id: conversationId },
-    });
+  const conversation = await this.prisma.conversation.findUnique({
+    where: { id: conversationId },
+  });
 
-    if (!conversation) {
-      throw new NotFoundException('Conversation not found');
-    }
-
-    const newStatus = validateTransition(conversation.status, 'close');
-
-    const updatedConversation = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.conversation.update({
-        where: { id: conversationId },
-        data: { status: newStatus },
-      });
-
-      await tx.activityLog.create({
-        data: {
-          conversationId,
-          userId,
-          action: 'CONVERSATION_CLOSED',
-          meta: undefined,
-        },
-      });
-
-      return updated;
-    });
-
-    this.logger.log(`Conversation ${conversationId} closed by ${userId}`);
-
-    return updatedConversation;
+  if (!conversation) {
+    throw new NotFoundException('Conversation not found');
   }
+
+  // ─── STAFF restriction ─────────────────────────────────────────────
+  // STAFF can only close conversations where they are the active assignee.
+  // ADMIN can close any conversation.
+  const currentUser = await this.prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      userRoles: { select: { role: { select: { name: true } } } },
+    },
+  });
+
+  const roles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
+  const isAdmin = roles.includes('ADMIN');
+
+  if (!isAdmin) {
+    const activeAssignment = await this.prisma.assignment.findFirst({
+      where: { conversationId, unassignedAt: null },
+      orderBy: { assignedAt: 'desc' },
+    });
+
+    if (!activeAssignment || activeAssignment.assignedToId !== userId) {
+      throw new ForbiddenException(
+        'STAFF can only close conversations assigned to themselves',
+      );
+    }
+  }
+
+  const newStatus = validateTransition(conversation.status, 'close');
+
+  const updatedConversation = await this.prisma.$transaction(async (tx) => {
+    const updated = await tx.conversation.update({
+      where: { id: conversationId },
+      data: { status: newStatus },
+    });
+
+    await tx.activityLog.create({
+      data: {
+        conversationId,
+        userId,
+        action: 'CONVERSATION_CLOSED',
+        meta: undefined,
+      },
+    });
+
+    return updated;
+  });
+
+  this.logger.log(`Conversation ${conversationId} closed by ${userId}`);
+
+  return updatedConversation;
+}
 
   async reopen(conversationId: string, userId: string) {
     const conversation = await this.prisma.conversation.findUnique({
