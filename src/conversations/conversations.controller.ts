@@ -27,7 +27,8 @@ import { AssignConversationDto } from './dto/assign-conversation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-
+import { Query } from '@nestjs/common';
+import { QueryConversationDto } from './dto/query-conversation.dto';
 @ApiTags('Conversations')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtAuthGuard)
@@ -42,11 +43,10 @@ export class ConversationsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Get all conversations for current user' })
-  async findAll(@Request() req) {
-    return this.conversationsService.findAll(req.user.id);
+  @ApiOperation({ summary: 'Get all conversations for current user with filter and pagination' })
+  async findAll(@Query() query: QueryConversationDto, @Request() req) {
+  return this.conversationsService.findAll(req.user.id, query);
   }
-
   @Get(':id')
   @ApiOperation({ summary: 'Get one conversation by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {

@@ -12,6 +12,7 @@ import { ChatModule } from './chat/chat.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { AttachmentsModule } from './attachments/attachments.module';
+import { MessagesModule } from './messages/messages.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -32,6 +33,7 @@ import { AttachmentsModule } from './attachments/attachments.module';
     NotificationsModule,
     WebhooksModule,
     AttachmentsModule,  
+    MessagesModule,
   ],
 })
 export class AppModule {}

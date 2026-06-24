@@ -14,6 +14,7 @@ import { validateTransition } from './validate-transition';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AttachmentsService } from '../attachments/attachments.service'; 
 import { Request } from 'express';
+import { QueryConversationDto } from './dto/query-conversation.dto';
 @Injectable()
 export class ConversationsService {
   private readonly logger = new Logger(ConversationsService.name);
@@ -83,25 +84,57 @@ export class ConversationsService {
     return conversation;
   }
 
-  async findAll(userId: string) {
-    const conversations = await this.prisma.conversation.findMany({
-      where: {
-        conversationMembers: {
-          some: { userId },
-        },
-      },
-      include: {
-        customer: {
-          select: { id: true, name: true, email: true },
-        },
-        _count: {
-          select: { messages: true },
-        },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+async findAll(userId: string, query: QueryConversationDto) {
+    const { status, assignedTo, page = 1, limit = 10 } = query;
+    const skip = (page - 1) * limit;
 
-    return conversations;
+    
+    // Always scoped to conversations the current user is a member of
+    const where: any = {
+      conversationMembers: {
+        some: { userId },
+      },
+      // Only add status filter if provided
+      ...(status && { status }),
+      // assignedTo filter — checks the assignments table for an active
+      // (unassignedAt: null) assignment to the specified user
+      ...(assignedTo && {
+        assignments: {
+          some: {
+            assignedToId: assignedTo,
+            unassignedAt: null,
+          },
+        },
+      }),
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.conversation.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          customer: {
+            select: { id: true, name: true, email: true },
+          },
+          _count: {
+            select: { messages: true },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.conversation.count({ where }),
+    ]);
+
+    return {
+      items,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findOne(id: string, userId: string) {

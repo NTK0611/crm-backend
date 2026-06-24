@@ -102,6 +102,9 @@ model Customer {
   conversations Conversation[]
 
   @@map("customers")
+  @@index([name])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Conversation {
