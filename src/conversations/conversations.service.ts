@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,6 +12,8 @@ import { AssignConversationDto } from './dto/assign-conversation.dto';
 import { SenderType } from '@prisma/client';
 import { validateTransition } from './validate-transition';
 import { NotificationsService } from '../notifications/notifications.service';
+import { AttachmentsService } from '../attachments/attachments.service'; 
+import { Request } from 'express';
 @Injectable()
 export class ConversationsService {
   private readonly logger = new Logger(ConversationsService.name);
@@ -18,6 +21,7 @@ export class ConversationsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
+    private readonly attachmentsService: AttachmentsService,
   ) {}
 
   // ─── Private Helper ───────────────────────────────────────────────
@@ -493,5 +497,80 @@ export class ConversationsService {
         },
       },
     });
+  }
+  // ─── Message with Attachment ───────────────────────────────────────
+
+  async createMessageWithAttachment(
+    conversationId: string,
+    content: string,
+    file: Express.Multer.File,
+    userId: string,
+    req: Request,
+  ) {
+    // Step 1: Membership check — reuse existing guard
+    // If user is not a member, throws 403 before any file is processed
+    await this.checkMembership(conversationId, userId);
+
+    // Step 2: Extra safety — file must exist
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
+
+    // Step 3: Single transaction — message + attachment created together
+    // If attachment insert fails, message insert is also rolled back.
+    
+    const result = await this.prisma.$transaction(async (tx) => {
+      // 3a: Create the message first — we need its ID for the attachment FK
+      const message = await tx.message.create({
+        data: {
+          conversationId,
+          senderId: userId,
+          senderType: SenderType.USER,
+          content,
+        },
+      });
+
+      // 3b: Store relative path in fileUrl column
+      // We store /uploads/filename, NOT the full URL.
+      // Full URL is constructed at response time via buildFileUrl().
+      const relativePath = `/uploads/${file.filename}`;
+
+      const attachment = await tx.attachment.create({
+        data: {
+          messageId: message.id,           // FK — this is why we create message first
+          fileName: file.originalname,     // original filename from client
+          fileUrl: relativePath,           // relative path, not full URL
+          fileType: file.mimetype,         // e.g. "image/jpeg"
+          fileSize: file.size,             // bytes
+        },
+      });
+
+      return { message, attachment };
+    });
+
+    // Step 4: Trigger notifications — same as regular createMessage()
+    // Done OUTSIDE the transaction because notification failure should not
+    // roll back a successfully uploaded file and message
+    await this.notificationsService.createForMessage(
+      conversationId,
+      userId,
+      result.message.id,
+      `New message with attachment in conversation`,
+    );
+
+    this.logger.log(
+      `Message with attachment created in conversation ${conversationId} by user ${userId}`,
+    );
+
+    // Step 5: Build response — replace stored relative path with full URL
+    const { fileUrl: relativePath, ...attachmentRest } = result.attachment;
+
+    return {
+      messageRecord: result.message,
+      attachment: {
+        ...attachmentRest,
+        fileUrl: this.attachmentsService.buildFileUrl(req, relativePath),
+      },
+    };
   }
 }

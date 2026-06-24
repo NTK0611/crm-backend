@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ServeStaticModule } from '@nestjs/serve-static'; 
+import { join } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthModule } from './health/health.module';
 import { CustomersModule } from './customers/customers.module';
@@ -9,11 +11,16 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { ChatModule } from './chat/chat.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
+import { AttachmentsModule } from './attachments/attachments.module';
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+    }),
+    ServeStaticModule.forRoot({
+      rootPath: join(process.cwd(), 'uploads'),
+      serveRoot: '/uploads',
     }),
     PrismaModule,
     HealthModule,
@@ -24,6 +31,7 @@ import { WebhooksModule } from './webhooks/webhooks.module';
     ChatModule,
     NotificationsModule,
     WebhooksModule,
+    AttachmentsModule,  
   ],
 })
 export class AppModule {}

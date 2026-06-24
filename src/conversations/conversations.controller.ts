@@ -5,15 +5,21 @@ import {
   Body,
   Param,
   ParseUUIDPipe,
+  UseInterceptors,
+  UploadedFile,
   UseGuards,
   Request,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiTags,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
+import { diskStorageConfig, fileTypeFilter, MAX_FILE_SIZE } from '../common/utils/file-upload.utils';
 import { ConversationsService } from './conversations.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -139,5 +145,45 @@ export class ConversationsController {
   async reopen(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
     const data = await this.conversationsService.reopen(id, req.user.id);
     return { message: 'Conversation reopened successfully', data };
+  }
+  // ─── Message with Attachment (Challenge 8) ────────────────────────
+
+  @Post(':id/messages/with-attachment')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorageConfig,
+      fileFilter: fileTypeFilter,
+      limits: { fileSize: MAX_FILE_SIZE },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Send a message with a file attachment' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file', 'content'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        content: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Message with attachment created' })
+  @ApiResponse({ status: 400, description: 'Invalid file type or missing file' })
+  @ApiResponse({ status: 403, description: 'Not a member of this conversation' })
+  @ApiResponse({ status: 413, description: 'File too large' })
+  async createMessageWithAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('content') content: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+  ) {
+    return this.conversationsService.createMessageWithAttachment(
+      id,
+      content,
+      file,
+      req.user.id,
+      req,
+    );
   }
 }

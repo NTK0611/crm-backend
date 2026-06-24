@@ -21,6 +21,7 @@ enum ConversationStatus {
 enum SenderType {
   USER
   CUSTOMER
+  
 }
 
 enum WebhookStatus {

@@ -26,3 +26,5 @@ Thumbs.db
 .idea/
 test-websocket.js
 test-websocket2.js
+uploads/
+tsconfig.build.tsbuildinfo
