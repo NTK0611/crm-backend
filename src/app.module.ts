@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ServeStaticModule } from '@nestjs/serve-static'; 
+import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthModule } from './health/health.module';
@@ -13,6 +13,8 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { AttachmentsModule } from './attachments/attachments.module';
 import { MessagesModule } from './messages/messages.module';
+import { QueueModule } from './queue/queue.module';
+
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -32,8 +34,9 @@ import { MessagesModule } from './messages/messages.module';
     ChatModule,
     NotificationsModule,
     WebhooksModule,
-    AttachmentsModule,  
+    AttachmentsModule,
     MessagesModule,
+    QueueModule,
   ],
 })
 export class AppModule {}
