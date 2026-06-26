@@ -9,6 +9,7 @@ import {
   UploadedFile,
   UseGuards,
   Request,
+  Query,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
@@ -27,8 +28,9 @@ import { AssignConversationDto } from './dto/assign-conversation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { Query } from '@nestjs/common';
 import { QueryConversationDto } from './dto/query-conversation.dto';
+import { RoleName } from '@prisma/client';
+
 @ApiTags('Conversations')
 @ApiBearerAuth('JWT')
 @UseGuards(JwtAuthGuard)
@@ -36,17 +38,30 @@ import { QueryConversationDto } from './dto/query-conversation.dto';
 export class ConversationsController {
   constructor(private readonly conversationsService: ConversationsService) {}
 
+  // ─── Create Conversation ──────────────────────────────────────────
+  // CUSTOMER không được tạo conversation — chỉ ADMIN và STAFF
   @Post()
-  @ApiOperation({ summary: 'Create a new conversation' })
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @ApiOperation({ summary: 'Create a new conversation (ADMIN, STAFF only)' })
+  @ApiResponse({ status: 201, description: 'Conversation created' })
+  @ApiResponse({ status: 403, description: 'CUSTOMER role cannot create conversations' })
   async create(@Body() dto: CreateConversationDto, @Request() req) {
     return this.conversationsService.create(dto, req.user.id);
   }
 
+  // ─── List Conversations ───────────────────────────────────────────
+  // ADMIN: thấy tất cả
+  // STAFF & CUSTOMER: chỉ thấy conversations họ là member
+  // userRole được extract từ req.user (đã được JwtStrategy attach)
   @Get()
-  @ApiOperation({ summary: 'Get all conversations for current user with filter and pagination' })
+  @ApiOperation({ summary: 'Get conversations — ADMIN sees all, STAFF/CUSTOMER sees own' })
   async findAll(@Query() query: QueryConversationDto, @Request() req) {
-  return this.conversationsService.findAll(req.user.id, query);
+    // req.user.userRoles được JwtStrategy.validate() trả về — xem jwt.strategy.ts
+    const userRole = req.user.userRoles?.[0]?.role?.name as RoleName ?? RoleName.STAFF;
+    return this.conversationsService.findAll(req.user.id, userRole, query);
   }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get one conversation by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
@@ -72,23 +87,19 @@ export class ConversationsController {
     return this.conversationsService.findMessages(id, req.user.id);
   }
 
-  // ─── Assignment & Status (Challenge 6) ──────────────────────────────
+  // ─── Assignment & Status (Challenge 6) ───────────────────────────
   @Post(':id/pending')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'STAFF')
-  @ApiOperation({ summary: 'Set a conversation to pending (no staff available)' })
+  @ApiOperation({ summary: 'Set a conversation to pending' })
   @ApiResponse({ status: 200, description: 'Conversation set to pending' })
   @ApiResponse({ status: 403, description: 'Insufficient role' })
   @ApiResponse({ status: 404, description: 'Conversation not found' })
   @ApiResponse({ status: 409, description: 'Invalid status transition' })
-  async pending(
-  @Param('id', ParseUUIDPipe) id: string,
-  @Request() req,
-  ) {
-  const data = await this.conversationsService.pending(id, req.user.id);
-  return { message: 'Conversation set to pending successfully', data };
+  async pending(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    const data = await this.conversationsService.pending(id, req.user.id);
+    return { message: 'Conversation set to pending successfully', data };
   }
-
 
   @Post(':id/assign')
   @UseGuards(RolesGuard)
@@ -97,8 +108,7 @@ export class ConversationsController {
   @ApiResponse({ status: 200, description: 'Conversation assigned' })
   @ApiResponse({ status: 403, description: 'Insufficient role' })
   @ApiResponse({ status: 404, description: 'Conversation not found' })
-  @ApiResponse({ status: 409, description: 'Invalid status transition' }
-  )
+  @ApiResponse({ status: 409, description: 'Invalid status transition' })
   async assign(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AssignConversationDto,
@@ -146,8 +156,8 @@ export class ConversationsController {
     const data = await this.conversationsService.reopen(id, req.user.id);
     return { message: 'Conversation reopened successfully', data };
   }
-  // ─── Message with Attachment (Challenge 8) ────────────────────────
 
+  // ─── Message with Attachment (Challenge 8) ────────────────────────
   @Post(':id/messages/with-attachment')
   @UseInterceptors(
     FileInterceptor('file', {

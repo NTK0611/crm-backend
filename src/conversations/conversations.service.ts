@@ -9,7 +9,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
 import { AssignConversationDto } from './dto/assign-conversation.dto';
-import { SenderType } from '@prisma/client';
+import { SenderType, RoleName } from '@prisma/client';
 import { validateTransition } from './validate-transition';
 import { AttachmentsService } from '../attachments/attachments.service';
 import { Request } from 'express';
@@ -85,14 +85,23 @@ export class ConversationsService {
     return conversation;
   }
 
-  async findAll(userId: string, query: QueryConversationDto) {
+  async findAll(userId: string, userRole: RoleName, query: QueryConversationDto) {
     const { status, assignedTo, page = 1, limit = 10 } = query;
     const skip = (page - 1) * limit;
 
+    // ADMIN sees all conversations — no membership filter
+    // STAFF and CUSTOMER only see conversations they are a member of
+    const membershipFilter =
+      userRole === RoleName.ADMIN
+        ? {}
+        : {
+            conversationMembers: {
+              some: { userId },
+            },
+          };
+
     const where: any = {
-      conversationMembers: {
-        some: { userId },
-      },
+      ...membershipFilter,
       ...(status && { status }),
       ...(assignedTo && {
         assignments: {
@@ -172,8 +181,8 @@ export class ConversationsService {
     });
 
     const callerRoles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
-    const isAdmin = callerRoles.includes('ADMIN');
-    const isStaff = callerRoles.includes('STAFF');
+    const isAdmin = callerRoles.includes(RoleName.ADMIN);
+    const isStaff = callerRoles.includes(RoleName.STAFF);
 
     if (isStaff && !isAdmin && dto.assignedTo !== userId) {
       throw new ForbiddenException('STAFF members can only self-assign conversations');
@@ -200,7 +209,7 @@ export class ConversationsService {
 
     const targetRoles = targetUser.userRoles.map((ur) => ur.role.name);
     const targetIsStaffOrAdmin =
-      targetRoles.includes('STAFF') || targetRoles.includes('ADMIN');
+      targetRoles.includes(RoleName.STAFF) || targetRoles.includes(RoleName.ADMIN);
 
     if (!targetIsStaffOrAdmin) {
       throw new ForbiddenException(
@@ -308,7 +317,7 @@ export class ConversationsService {
     });
 
     const roles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
-    const isAdmin = roles.includes('ADMIN');
+    const isAdmin = roles.includes(RoleName.ADMIN);
 
     if (!isAdmin) {
       const activeAssignment = await this.prisma.assignment.findFirst({
@@ -377,7 +386,7 @@ export class ConversationsService {
     });
 
     const roles = currentUser?.userRoles.map((ur) => ur.role.name) ?? [];
-    const isAdmin = roles.includes('ADMIN');
+    const isAdmin = roles.includes(RoleName.ADMIN);
 
     if (!isAdmin) {
       const activeAssignment = await this.prisma.assignment.findFirst({
@@ -467,8 +476,6 @@ export class ConversationsService {
 
     this.logger.log(`Message sent in conversation: ${conversationId} by user: ${userId}`);
 
-    // ── Đẩy job vào queue thay vì gọi trực tiếp ──────────────────────
-    // Request trả về ngay sau đây, notification xử lý nền
     await this.notificationProducer.dispatchSendNotification({
       messageId: message.id,
       conversationId,
@@ -545,7 +552,6 @@ export class ConversationsService {
       return { message, attachment };
     });
 
-    // ── Đẩy job vào queue thay vì gọi trực tiếp ──────────────────────
     await this.notificationProducer.dispatchSendNotification({
       messageId: result.message.id,
       conversationId,

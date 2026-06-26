@@ -2,12 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { QueryCustomerDto } from './dto/query-customer.dto';
+import { RoleName } from '@prisma/client';
 
 @Injectable()
 export class CustomersService {
@@ -16,7 +18,6 @@ export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateCustomerDto, userId: string) {
-    // Check duplicate email
     if (dto.email) {
       const existingEmail = await this.prisma.customer.findUnique({
         where: { email: dto.email },
@@ -26,7 +27,6 @@ export class CustomersService {
       }
     }
 
-    // Check duplicate phone
     if (dto.phone) {
       const existingPhone = await this.prisma.customer.findUnique({
         where: { phone: dto.phone },
@@ -42,24 +42,29 @@ export class CustomersService {
 
     this.logger.log(`Customer created: ${customer.id}`);
 
-    // Activity log
     await this.prisma.activityLog.create({
-       data: {
+      data: {
         conversationId: null,
         userId,
         action: 'CUSTOMER_CREATED',
         meta: { customerId: customer.id, name: customer.name },
       },
-    })
+    });
 
     return customer;
   }
 
-  async findAll(query: QueryCustomerDto) {
+  async findAll(query: QueryCustomerDto, userId: string, userRole: RoleName) {
+    // CUSTOMER role has no business viewing the customer list
+    if (userRole === RoleName.CUSTOMER) {
+      throw new ForbiddenException('Access denied');
+    }
+
     const { search, status, page = 1, limit = 10 } = query;
     const skip = (page - 1) * limit;
 
-    const where = {
+    // Base where clause — search and status filters apply to all roles
+    const baseWhere = {
       ...(status && { status }),
       ...(search && {
         OR: [
@@ -68,6 +73,26 @@ export class CustomersService {
         ],
       }),
     };
+
+    // STAFF: only see customers whose conversations are actively assigned to them
+    // Path: assignments (assignedToId = userId, unassignedAt = null)
+    //         → conversation → customer
+    const where =
+      userRole === RoleName.ADMIN
+        ? baseWhere
+        : {
+            ...baseWhere,
+            conversations: {
+              some: {
+                assignments: {
+                  some: {
+                    assignedToId: userId,
+                    unassignedAt: null,
+                  },
+                },
+              },
+            },
+          };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.customer.findMany({
@@ -103,10 +128,8 @@ export class CustomersService {
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
-    // Check customer exists
     await this.findOne(id);
 
-    // Check duplicate email
     if (dto.email) {
       const existingEmail = await this.prisma.customer.findFirst({
         where: { email: dto.email, NOT: { id } },
@@ -116,7 +139,6 @@ export class CustomersService {
       }
     }
 
-    // Check duplicate phone
     if (dto.phone) {
       const existingPhone = await this.prisma.customer.findFirst({
         where: { phone: dto.phone, NOT: { id } },
