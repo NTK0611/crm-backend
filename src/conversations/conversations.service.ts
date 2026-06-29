@@ -142,23 +142,34 @@ export class ConversationsService {
     };
   }
 
-  async findOne(id: string, userId: string) {
+ async findOne(id: string, userId: string, userRole?: RoleName) {
+  // ADMIN bypasses membership check — they can see any conversation
+  if (userRole !== RoleName.ADMIN) {
     await this.checkMembership(id, userId);
-
-    const conversation = await this.prisma.conversation.findUnique({
+  } else {
+    // Still need to verify the conversation exists for ADMIN
+    const exists = await this.prisma.conversation.findUnique({
       where: { id },
-      include: {
-        customer: {
-          select: { id: true, name: true, email: true },
-        },
-        conversationMembers: {
-          select: { userId: true, joinedAt: true },
-        },
-      },
     });
-
-    return conversation;
+    if (!exists) {
+      throw new NotFoundException(`Conversation with id ${id} not found`);
+    }
   }
+
+  const conversation = await this.prisma.conversation.findUnique({
+    where: { id },
+    include: {
+      customer: {
+        select: { id: true, name: true, email: true },
+      },
+      conversationMembers: {
+        select: { userId: true, joinedAt: true },
+      },
+    },
+  });
+
+  return conversation;
+}
 
   // ─── Assignment & Status ───────────────────────────────────────────
 
@@ -519,7 +530,7 @@ export class ConversationsService {
     content: string,
     file: Express.Multer.File,
     userId: string,
-    req: Request,
+    
   ) {
     await this.checkMembership(conversationId, userId);
 
@@ -537,18 +548,19 @@ export class ConversationsService {
         },
       });
 
-      const relativePath = `/uploads/${file.filename}`;
+     
+      const cloudinaryUrl = await this.attachmentsService.uploadFile(file);
 
       const attachment = await tx.attachment.create({
-        data: {
+         data: {
           messageId: message.id,
           fileName: file.originalname,
-          fileUrl: relativePath,
+          fileUrl: cloudinaryUrl,
+    // Now storing the full Cloudinary HTTPS URL instead of a local path
           fileType: file.mimetype,
           fileSize: file.size,
-        },
-      });
-
+             },
+        });
       return { message, attachment };
     });
 
@@ -563,14 +575,9 @@ export class ConversationsService {
       `Message with attachment created in conversation ${conversationId} by user ${userId}`,
     );
 
-    const { fileUrl: relativePath, ...attachmentRest } = result.attachment;
-
     return {
-      messageRecord: result.message,
-      attachment: {
-        ...attachmentRest,
-        fileUrl: this.attachmentsService.buildFileUrl(req, relativePath),
-      },
-    };
+        messageRecord: result.message,
+        attachment: result.attachment,
+     };
   }
 }

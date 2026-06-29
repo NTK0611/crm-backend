@@ -66,14 +66,15 @@ export class CustomersController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Get a customer by ID (ADMIN, STAFF)' })
+  @ApiOperation({ summary: 'Get a customer by ID (ADMIN sees all, STAFF sees assigned only)' })
   @ApiParam({ name: 'id', description: 'Customer UUID' })
   @ApiResponse({ status: 200, description: 'Customer found' })
-  @ApiResponse({ status: 403, description: 'Insufficient role' })
+  @ApiResponse({ status: 403, description: 'Not assigned to this customer' })
   @ApiResponse({ status: 404, description: 'Customer not found' })
-  async findOne(@Param('id') id: string) {
+  async findOne(@Param('id') id: string ,@Req() req) {
     this.logger.log(`GET /customers/${id}`);
-    const data = await this.customersService.findOne(id);
+    const userRole = req.user.userRoles?.[0]?.role?.name as RoleName;
+    const data = await this.customersService.findOne(id, req.user.id, userRole);
     return { message: 'Customer retrieved successfully', data };
   }
 

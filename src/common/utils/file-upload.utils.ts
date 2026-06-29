@@ -1,44 +1,28 @@
 import { BadRequestException } from '@nestjs/common';
-import { diskStorage } from 'multer';
-import { extname } from 'path';
-import { v4 as uuidv4 } from 'uuid';
-
+import { memoryStorage } from 'multer';
 
 // Only these MIME types are accepted. Any other type is rejected with 400
-// before the file is written to disk — multer checks this during upload.
+// before the file reaches your controller.
 const ALLOWED_MIME_TYPES = [
-  'image/jpeg',   // .jpg
-  'image/png',    // .png
-  'application/pdf',  // .pdf
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'image/jpeg',
+  'image/png',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ];
 
+// 5MB in bytes
+export const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
-// 5MB in bytes — multer uses bytes, not megabytes
-export const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
-
-
-// Controls WHERE files are saved and WHAT they are named.
-// Using disk storage (not memory storage) because:
-// - Memory storage holds the entire file in RAM — bad for large files
-// - Disk storage writes directly to the filesystem
-export const diskStorageConfig = diskStorage({
-  destination: './uploads',
-  // Filename strategy: uuid + original extension
-  // Why uuid? If two users upload "photo.jpg", without uuid they would
-  // overwrite each other. UUID guarantees uniqueness.
-  filename: (req, file, callback) => {
-    const uniqueName = `${uuidv4()}${extname(file.originalname)}`;
-    callback(null, uniqueName);
-  },
-});
+// Memory storage instead of disk storage.
+// Why: Cloudinary's upload_stream accepts a Buffer directly.
+// With disk storage you'd write to disk, read it back, upload, then delete —
+// three unnecessary operations. Memory storage keeps the file in RAM
+// as file.buffer, ready to stream straight to Cloudinary.
+// Trade-off: large files consume RAM. At 5MB limit this is acceptable.
+export const memoryStorageConfig = memoryStorage();
 
 // ─── File type filter ──────────────────────────────────────────────────────
-// Multer calls this function for every uploaded file.
-// If we call callback(null, true) → file is accepted
-// If we call callback(error, false) → file is rejected
-
-
+// Unchanged — still validate MIME type before accepting the file.
 export const fileTypeFilter = (
   req: any,
   file: Express.Multer.File,

@@ -1,6 +1,14 @@
 # CRM Backend — VietProDev Node.js Challenge
 
-A Realtime CRM / Customer Support backend built with Node.js and TypeScript.
+A Realtime CRM / Customer Support backend built with Node.js and TypeScript, covering Challenges 0–12.
+
+---
+
+## Project Introduction
+
+This project is a backend system for a Realtime CRM / Customer Support platform. It allows internal staff (ADMIN, STAFF) to manage customers, handle support conversations in real time, receive notifications, upload file attachments, and process background jobs. Built as part of the VietProDev Node.js Backend Internship Challenge series.
+
+---
 
 ## Tech Stack
 
@@ -14,8 +22,9 @@ A Realtime CRM / Customer Support backend built with Node.js and TypeScript.
 | Auth | JWT |
 | Realtime | Socket.IO |
 | Queue | BullMQ + Upstash Redis |
+| File Storage | Cloudinary |
 | API Docs | Swagger / OpenAPI |
-| Containerization | Docker + docker-compose (Challenge 12) |
+| Containerization | Docker + docker-compose |
 
 ---
 
@@ -28,7 +37,7 @@ src/
 │   ├── dto/                  # RegisterDto, LoginDto
 │   ├── guards/               # JwtAuthGuard, RolesGuard
 │   └── strategies/           # JwtStrategy
-├── attachments/              # File upload & retrieval
+├── attachments/              # File upload & retrieval (Cloudinary)
 ├── chat/                     # Socket.IO WebSocket gateway
 ├── common/
 │   ├── filters/              # GlobalExceptionFilter
@@ -54,7 +63,7 @@ src/
 
 - Node.js 20+
 - PostgreSQL running locally (or via Docker)
-- Redis / Upstash Redis (required for Challenge 10+ queue)
+- Redis / Upstash Redis (required for queue — Challenge 10+)
 
 ### Setup
 
@@ -64,7 +73,7 @@ npm install
 
 # 2. Copy environment file
 cp .env.example .env
-# Edit .env — set DATABASE_URL, JWT_SECRET, REDIS_URL
+# Edit .env — set DATABASE_URL, JWT_SECRET, REDIS_URL, Cloudinary credentials
 
 # 3. Run database migrations
 npx prisma migrate dev
@@ -76,9 +85,11 @@ npx prisma db seed
 npm run start:dev
 ```
 
+App will be available at `http://localhost:3000`.
+
 ### Known Issue — Node.js v24 Incompatibility
 
-NestJS CLI is incompatible with Node.js v24. Use this workaround to run the app:
+NestJS CLI is incompatible with Node.js v24. Use this workaround:
 
 ```bash
 npx tsc -p tsconfig.build.json && node dist/main.js
@@ -88,18 +99,131 @@ Permanent fix: downgrade to Node.js 20 LTS via nvm.
 
 ---
 
+## Running with Docker
+
+### Prerequisites
+
+- Docker Desktop installed and running
+
+### Setup
+
+```bash
+# 1. Copy Docker environment file and fill in real values
+cp .env.example .env.docker
+# Edit .env.docker — set DATABASE_URL, REDIS_URL, JWT_SECRET, Cloudinary credentials
+
+# 2. Build and start all containers
+docker compose up --build
+
+# 3. App will be available at:
+#    API:     http://localhost:3000/api
+#    Swagger: http://localhost:3000/api/docs
+```
+
+### Services
+
+| Service | Port |
+|---|---|
+| app (NestJS) | 3000 |
+| db (PostgreSQL) | 5432 |
+| redis | 6379 |
+
+### Stop containers
+
+```bash
+# Stop without deleting data
+docker compose down
+
+# Stop and delete volumes (wipes database)
+docker compose down -v
+```
+
+### Notes
+
+- Database migrations run automatically on container start via `docker-entrypoint.sh`
+- `.env.docker` is excluded from git — never commit real credentials
+- Inside Docker, services communicate via service names (`db`, `redis`) not `localhost`
+
+---
+
 ## Environment Variables
 
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/db
+# App
+PORT=3000
+NODE_ENV=development
+
+# Database
+DATABASE_URL=postgresql://user:password@localhost:5432/crm_db
+
+# Auth
 JWT_SECRET=your_jwt_secret
 JWT_EXPIRES_IN=7d
-PORT=3000
 
 # Queue (Challenge 10+)
 REDIS_URL=rediss://your-upstash-url:6379
+REDIS_HOST=your-upstash-host
+REDIS_PORT=6379
 REDIS_TOKEN=your-upstash-token
+REDIS_TLS=true
+
+# Cloudinary (Challenge 8+)
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
 ```
+
+For Docker, use `.env.docker` with service names instead of `localhost`:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@db:5432/crm_db
+REDIS_URL=redis://redis:6379
+REDIS_TLS=false
+```
+
+---
+
+## API Documentation
+
+Swagger UI is available at `http://localhost:3000/api/docs` after starting the app.
+
+To authenticate in Swagger:
+1. Call `POST /api/auth/login` and copy the `accessToken`
+2. Click **Authorize** in Swagger UI
+3. Enter `Bearer <accessToken>`
+
+### Endpoint Summary
+
+| Method | Endpoint | Description | Auth |
+|---|---|---|---|
+| GET | /api/health | Health check | Public |
+| POST | /api/auth/register | Register new user | ADMIN only |
+| POST | /api/auth/login | Login and get JWT token | Public |
+| GET | /api/auth/profile | Get current user profile | JWT |
+| POST | /api/customers | Create a new customer | ADMIN only |
+| GET | /api/customers | Get all customers | ADMIN / STAFF (assigned only) |
+| GET | /api/customers/:id | Get customer by ID | ADMIN / STAFF (assigned only) |
+| PUT | /api/customers/:id | Update customer | ADMIN only |
+| DELETE | /api/customers/:id | Delete customer | ADMIN only |
+| GET | /api/users | Get all users | JWT |
+| GET | /api/users/:id | Get user by ID | JWT |
+| POST | /api/conversations | Create a conversation | ADMIN / STAFF |
+| GET | /api/conversations | Get conversations | ADMIN sees all / STAFF+CUSTOMER sees own |
+| GET | /api/conversations/:id | Get one conversation | ADMIN / member only |
+| POST | /api/conversations/:id/messages | Send a message | JWT + member |
+| GET | /api/conversations/:id/messages | Get message history | JWT + member |
+| POST | /api/conversations/:id/pending | Set conversation to pending | JWT |
+| POST | /api/conversations/:id/assign | Assign to staff | ADMIN / STAFF |
+| POST | /api/conversations/:id/unassign | Unassign | ADMIN / STAFF |
+| POST | /api/conversations/:id/close | Close conversation | ADMIN / STAFF |
+| POST | /api/conversations/:id/reopen | Reopen conversation | ADMIN / STAFF |
+| POST | /api/conversations/:id/messages/with-attachment | Send message with file | JWT + member |
+| GET | /api/attachments/:id | Get attachment metadata | JWT + member |
+| GET | /api/notifications | Get my notifications | JWT |
+| POST | /api/notifications/:id/read | Mark notification as read | JWT |
+| POST | /api/webhooks/messages | Receive webhook event | Public |
+| GET | /api/webhooks/events | Get all webhook events | ADMIN only |
+| GET | /api/messages | Search messages with pagination | JWT |
 
 ---
 
@@ -125,35 +249,47 @@ All responses follow this unified shape:
 JWT-based authentication introduced in Challenge 3.
 
 ```
-POST /api/auth/login
-  → returns { accessToken: "eyJ..." }
-
-GET /api/protected-endpoint
-  → Authorization: Bearer <accessToken>
+POST /api/auth/register   → create account
+POST /api/auth/login      → returns { accessToken: "eyJ..." }
+GET  /api/auth/profile    → requires valid Bearer token
 ```
 
 Tokens are verified by `JwtAuthGuard`. Role-based access is enforced by `RolesGuard` using the `@Roles()` decorator.
 
 **Roles:**
-- `ADMIN` — full access, manages users, customers, conversations
-- `STAFF` — handles assigned conversations, sends messages
-- `CUSTOMER` — views and sends messages in own conversations
+
+| Role | Permissions |
+|---|---|
+| `ADMIN` | Full access — manages users, customers, conversations, webhooks |
+| `STAFF` | Handles assigned conversations, sends messages |
+| `CUSTOMER` | Views and sends messages in own conversations |
 
 ---
 
 ## Conversation / Message Flow
 
 ```
-1. ADMIN/STAFF creates conversation → POST /conversations
-2. Conversation starts with status: OPEN
-3. ADMIN/STAFF assigns to staff → POST /conversations/:id/assign
+1. ADMIN/STAFF creates conversation
+   POST /api/conversations
+   → status: OPEN
+
+2. ADMIN/STAFF assigns to a staff member
+   POST /api/conversations/:id/assign
    → status: ASSIGNED
-4. Staff sends messages → POST /conversations/:id/messages
-5. Staff closes conversation → POST /conversations/:id/close
+
+3. Staff sends messages
+   POST /api/conversations/:id/messages
+
+4. Staff closes conversation
+   POST /api/conversations/:id/close
    → status: CLOSED
-6. Can reopen → POST /conversations/:id/reopen
+
+5. Can reopen
+   POST /api/conversations/:id/reopen
    → status: OPEN
 ```
+
+Valid status transitions: `OPEN → ASSIGNED → CLOSED → OPEN (reopen)`
 
 ---
 
@@ -167,11 +303,12 @@ Socket.IO gateway introduced in Challenge 5.
 
 2. Server validates token in handleConnection()
    → attaches user to socket
+   → rejects connection if token invalid
 
 3. Client joins a conversation room:
    socket.emit("joinRoom", { conversationId: "uuid" })
 
-4. Client sends message:
+4. Client sends a message:
    socket.emit("sendMessage", { conversationId, content })
 
 5. Server saves message to DB and broadcasts to room:
@@ -182,57 +319,68 @@ Token can be passed via `auth.token` or `query.token` for Postman compatibility.
 
 ---
 
-## File Upload Flow (Challenge 8)
+## File Upload Flow
+
+Introduced in Challenge 8. Files are stored on Cloudinary.
 
 ```
 POST /api/conversations/:id/messages/with-attachment
   Content-Type: multipart/form-data
-  Body: { file: <binary>, content: "message text" }
+  Body: { file: <binary>, content: "optional message text" }
 
-→ Server validates file type (jpg, png, pdf, docx) and size (max 5MB)
-→ $transaction: creates Message first, then Attachment with messageId
-→ Returns message + attachment with full file URL
+→ Validates file type: jpg, png, pdf, docx only
+→ Validates file size: max 5MB
+→ Uploads file to Cloudinary
+→ DB transaction: creates Message, then Attachment with messageId
+→ Returns message + attachment with Cloudinary URL
 ```
 
-Files are stored locally in `/uploads/`. In production, use Cloudinary or S3 with signed URLs to enforce access control.
+Only conversation members can access attachments. Cloudinary URLs provide access-controlled file delivery without exposing local paths.
 
 ---
 
-## Queue / Background Job Flow (Challenge 10)
+## Queue / Background Job Flow
 
-BullMQ + Upstash Redis used for background notification jobs.
+BullMQ + Redis used for background notification jobs. Introduced in Challenge 10.
 
 ```
-1. User sends message → POST /conversations/:id/messages
+1. User sends message → POST /api/conversations/:id/messages
 2. ConversationsService saves message to DB
-3. NotificationProducer.dispatchSendNotification() adds job to queue
+3. NotificationProducer adds job to BullMQ queue
    → HTTP response returns immediately (non-blocking)
-4. NotificationConsumer.process() picks up job in background:
-   a. Finds all conversation members except sender
-   b. Creates Notification records in DB for each member
-   c. Logs job status (active / completed / failed)
-5. If job fails → retry up to 3 times with exponential backoff
+4. NotificationConsumer picks up job in background:
+   a. Finds all conversation members except the sender
+   b. Creates Notification records in DB (skipDuplicates: true)
+   c. Logs job status: active / completed / failed
+5. If job fails → retries up to 3 times with exponential backoff
 ```
 
-
+Jobs are deduplicated by `jobId: notification_<messageId>` to prevent duplicate notifications on retry.
 
 ---
 
-## Webhook / Notification Handling (Challenge 7)
+## Webhook / Notification Handling
+
+Introduced in Challenge 7.
 
 ```
 POST /api/webhooks/messages  (public — no JWT required)
-  → Validates payload
-  → Checks eventId idempotency (skips duplicate events)
+  → Validates payload structure
+  → Checks eventId for idempotency (skips duplicate events)
   → Saves WebhookEvent to DB with status PROCESSED
 
 GET /api/webhooks/events  (ADMIN only)
   → Returns all stored webhook events for debugging
 ```
 
+```
+GET  /api/notifications            → user sees own notifications only
+POST /api/notifications/:id/read   → marks notification as read
+```
+
 ---
 
-## Role-Based Access Control (Challenge 11)
+## Role-Based Access Control
 
 | Endpoint | ADMIN | STAFF | CUSTOMER |
 |---|---|---|---|
@@ -241,24 +389,32 @@ GET /api/webhooks/events  (ADMIN only)
 | View all customers | ✅ | assigned only | ❌ |
 | Create conversation | ✅ | ✅ | ❌ |
 | View conversations | all | member only | member only |
-| Assign/close conversation | ✅ | ✅ | ❌ |
+| Assign / close conversation | ✅ | ✅ | ❌ |
 | View webhook events | ✅ | ❌ | ❌ |
 
 ---
 
-## Rate Limiting (Challenge 11)
+## Rate Limiting
 
 | Endpoint | Limit |
 |---|---|
-| POST /auth/login | 5 requests / 60s |
-| POST /auth/register | 3 requests / 60s |
-| POST /webhooks/messages | 30 requests / 60s |
+| POST /api/auth/login | 5 requests / 60s |
+| POST /api/auth/register | 3 requests / 60s |
+| POST /api/webhooks/messages | 30 requests / 60s |
 | All other endpoints | 100 requests / 60s (global default) |
 
-Rate limit headers are included in every response:
-- `x-ratelimit-limit` — max requests allowed
-- `x-ratelimit-remaining` — requests remaining in window
-- `x-ratelimit-reset` — seconds until window resets
+---
+
+## Database Design
+
+See `docs/database_analysis.md` for full ERD and table descriptions.
+
+**Entities:** `users`, `roles`, `user_roles`, `customers`, `conversations`, `conversation_members`, `messages`, `assignments`, `notifications`, `webhook_events`, `attachments`, `activity_logs`
+
+Key constraints:
+- `@@unique([userId, referenceId])` on `notifications` — prevents duplicate notifications on job retry
+- `eventId` unique on `webhook_events` — enforces idempotency
+- Soft-delete pattern on `assignments` via `unassignedAt` nullable field
 
 ---
 
@@ -268,15 +424,9 @@ Rate limit headers are included in every response:
 - JWT tokens are never logged
 - Passwords are never logged
 - `passwordHash` is excluded from all API responses via Prisma `select`
-- File access is checked against conversation membership
+- File access is gated by conversation membership check
 - Webhook events endpoint is ADMIN-only to prevent data leakage
-- Rate limiting protects auth endpoints from brute-force attacks
-- In production: use signed URLs (Cloudinary/S3) instead of local file serving to prevent direct file access bypass
-
----
-
-## Database Design
-
-See `docs/database_analysis.md` for full ERD and table descriptions.
-
-**Entities:** users, roles, user_roles, customers, conversations, conversation_members, messages, assignments, notifications, webhook_events, attachments, activity_logs
+- Rate limiting protects auth and webhook endpoints from brute-force and abuse
+- In production: use signed Cloudinary URLs instead of public URLs to prevent unauthorized file access
+- Local Redis in Docker has no auth — acceptable for development; add `requirepass` for production
+- `userRoles?.[0]` reads only the first role — safe for current data model (one role per user), fragile if multi-role support is added later

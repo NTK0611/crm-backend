@@ -1,5 +1,3 @@
-// src/attachments/attachments.service.ts
-
 import {
   Injectable,
   NotFoundException,
@@ -7,25 +5,34 @@ import {
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
-import { Request } from 'express';
+import { CloudinaryService } from './cloudinary.service';
 
 @Injectable()
 export class AttachmentsService {
   private readonly logger = new Logger(AttachmentsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly cloudinaryService: CloudinaryService,
+  ) {}
 
-  // ─── Helper: turn stored relative path into a full URL ────────────
-  // The DB column "fileUrl" actually stores a relative path: /uploads/abc.jpg
-  
-  buildFileUrl(req: Request, relativePath: string): string {
-    return `${req.protocol}://${req.get('host')}${relativePath}`;
+  // ─── Upload buffer to Cloudinary ──────────────────────────────────
+  // Called by ConversationsService when creating a message with attachment.
+  // Returns the secure Cloudinary URL to store in DB.
+  async uploadFile(file: Express.Multer.File): Promise<string> {
+    const result = await this.cloudinaryService.uploadBuffer(
+      file.buffer,
+      file.originalname,
+      file.mimetype,
+    );
+    // result.secure_url is the permanent HTTPS URL Cloudinary gives us.
+    // This is what we store in the database as fileUrl.
+    return result.secure_url;
   }
 
   // ─── GET /api/attachments/:id ──────────────────────────────────────
-  async findOne(attachmentId: string, userId: string, req: Request) {
+  async findOne(attachmentId: string, userId: string) {
     // Step 1: Find attachment — join through message to get conversationId
-    // Attachment → Message → conversationId (no direct FK to conversation)
     const attachment = await this.prisma.attachment.findUnique({
       where: { id: attachmentId },
       include: {
@@ -36,7 +43,7 @@ export class AttachmentsService {
     });
 
     if (!attachment) {
-      throw new NotFoundException(`Attachment with id ${attachmentId} not found`);
+      throw new NotFoundException(`Attachment ${attachmentId} not found`);
     }
 
     // Step 2: Authorization — user must be a member of the conversation
@@ -54,14 +61,10 @@ export class AttachmentsService {
 
     this.logger.log(`Attachment ${attachmentId} accessed by user ${userId}`);
 
-    // Step 3: Shape the response
-    // - Drop the internal `message` join (not useful to the caller)
-    // - Replace the stored relative path with a full URL
-    const { message: _msg, fileUrl: relativePath, ...rest } = attachment;
-
-    return {
-      ...rest,
-      fileUrl: this.buildFileUrl(req, relativePath),
-    };
+    // Step 3: Shape the response — drop the internal message join
+    // fileUrl now contains the full Cloudinary URL directly from DB,
+    // no need to build it from request like before
+    const { message: _msg, ...rest } = attachment;
+    return rest;
   }
 }

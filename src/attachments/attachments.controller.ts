@@ -1,4 +1,3 @@
-
 import {
   Controller,
   Get,
@@ -32,6 +31,7 @@ export class AttachmentsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Request() req,
   ) {
-    return this.attachmentsService.findOne(id, req.user.id, req);
+    // No longer passing req — Cloudinary URL is stored directly in DB
+    return this.attachmentsService.findOne(id, req.user.id);
   }
 }

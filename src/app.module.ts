@@ -1,9 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { ServeStaticModule } from '@nestjs/serve-static';
+
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
-import { join } from 'path';
+
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthModule } from './health/health.module';
 import { CustomersModule } from './customers/customers.module';
@@ -23,10 +23,7 @@ import { QueueModule } from './queue/queue.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
-    ServeStaticModule.forRoot({
-      rootPath: join(process.cwd(), 'uploads'),
-      serveRoot: '/uploads',
-    }),
+    
 
     // Rate limiting — global default: 100 requests per 60 seconds
     // Individual endpoints override this with @Throttle({ default: { limit: X, ttl: Y } })

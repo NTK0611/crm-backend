@@ -19,7 +19,12 @@ export class NotificationProducer {
   ) {}
 
   async dispatchSendNotification(data: NotificationJobData): Promise<void> {
+    // jobId tied to messageId — BullMQ deduplicates at queue level:
+    // if a job with this ID already exists (pending/active), it won't
+    // add a duplicate. Combines with skipDuplicates in processor
+    // for two-layer protection against duplicate notifications.
     await this.notificationQueue.add(JOB_NAMES.SEND_NOTIFICATION, data, {
+      jobId: `notification_${data.messageId}`,
       attempts: 3,
       backoff: {
         type: 'exponential',

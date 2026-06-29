@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.docker
+.env.example
+uploads/
+.git/
+.gitignore
+.vscode/
+.idea/
+test/
+**/*.spec.ts
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db

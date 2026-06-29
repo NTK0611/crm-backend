@@ -44,6 +44,10 @@ export class NotificationProcessor extends WorkerHost {
       return;
     }
 
+    // skipDuplicates: true prevents duplicate rows if this job retries
+    // after a partial insert. Prisma will skip any row that violates
+    // a unique constraint instead of throwing.
+    // The unique constraint needed: @@unique([userId, referenceId]) in schema
     await this.prisma.notification.createMany({
       data: members.map((member) => ({
         userId: member.userId,
@@ -51,6 +55,7 @@ export class NotificationProcessor extends WorkerHost {
         content: content.length > 100 ? content.slice(0, 100) + '...' : content,
         referenceId: messageId,
       })),
+      skipDuplicates: true,
     });
 
     this.logger.log(

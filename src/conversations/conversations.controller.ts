@@ -20,7 +20,7 @@ import {
   ApiConsumes,
   ApiBody,
 } from '@nestjs/swagger';
-import { diskStorageConfig, fileTypeFilter, MAX_FILE_SIZE } from '../common/utils/file-upload.utils';
+import { memoryStorageConfig, fileTypeFilter, MAX_FILE_SIZE } from '../common/utils/file-upload.utils';
 import { ConversationsService } from './conversations.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -39,7 +39,6 @@ export class ConversationsController {
   constructor(private readonly conversationsService: ConversationsService) {}
 
   // ─── Create Conversation ──────────────────────────────────────────
-  // CUSTOMER không được tạo conversation — chỉ ADMIN và STAFF
   @Post()
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'STAFF')
@@ -51,13 +50,9 @@ export class ConversationsController {
   }
 
   // ─── List Conversations ───────────────────────────────────────────
-  // ADMIN: thấy tất cả
-  // STAFF & CUSTOMER: chỉ thấy conversations họ là member
-  // userRole được extract từ req.user (đã được JwtStrategy attach)
   @Get()
   @ApiOperation({ summary: 'Get conversations — ADMIN sees all, STAFF/CUSTOMER sees own' })
   async findAll(@Query() query: QueryConversationDto, @Request() req) {
-    // req.user.userRoles được JwtStrategy.validate() trả về — xem jwt.strategy.ts
     const userRole = req.user.userRoles?.[0]?.role?.name as RoleName ?? RoleName.STAFF;
     return this.conversationsService.findAll(req.user.id, userRole, query);
   }
@@ -65,7 +60,8 @@ export class ConversationsController {
   @Get(':id')
   @ApiOperation({ summary: 'Get one conversation by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    return this.conversationsService.findOne(id, req.user.id);
+    const userRole = req.user.userRoles?.[0]?.role?.name as RoleName ?? RoleName.STAFF;
+    return this.conversationsService.findOne(id, req.user.id, userRole);
   }
 
   @Post(':id/messages')
@@ -87,7 +83,7 @@ export class ConversationsController {
     return this.conversationsService.findMessages(id, req.user.id);
   }
 
-  // ─── Assignment & Status (Challenge 6) ───────────────────────────
+  // ─── Assignment & Status ───────────────────────────────────────────
   @Post(':id/pending')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'STAFF')
@@ -157,11 +153,13 @@ export class ConversationsController {
     return { message: 'Conversation reopened successfully', data };
   }
 
-  // ─── Message with Attachment (Challenge 8) ────────────────────────
+  // ─── Message with Attachment ───────────────────────────────────────
   @Post(':id/messages/with-attachment')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: diskStorageConfig,
+      storage: memoryStorageConfig,
+      // Memory storage keeps the file in file.buffer — no disk write.
+      // Buffer is streamed directly to Cloudinary in AttachmentsService.
       fileFilter: fileTypeFilter,
       limits: { fileSize: MAX_FILE_SIZE },
     }),
@@ -193,7 +191,6 @@ export class ConversationsController {
       content,
       file,
       req.user.id,
-      req,
     );
   }
 }

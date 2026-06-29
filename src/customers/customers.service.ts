@@ -55,7 +55,6 @@ export class CustomersService {
   }
 
   async findAll(query: QueryCustomerDto, userId: string, userRole: RoleName) {
-    // CUSTOMER role has no business viewing the customer list
     if (userRole === RoleName.CUSTOMER) {
       throw new ForbiddenException('Access denied');
     }
@@ -63,7 +62,6 @@ export class CustomersService {
     const { search, status, page = 1, limit = 10 } = query;
     const skip = (page - 1) * limit;
 
-    // Base where clause — search and status filters apply to all roles
     const baseWhere = {
       ...(status && { status }),
       ...(search && {
@@ -74,9 +72,6 @@ export class CustomersService {
       }),
     };
 
-    // STAFF: only see customers whose conversations are actively assigned to them
-    // Path: assignments (assignedToId = userId, unassignedAt = null)
-    //         → conversation → customer
     const where =
       userRole === RoleName.ADMIN
         ? baseWhere
@@ -115,7 +110,8 @@ export class CustomersService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userId: string, userRole: RoleName) {
+    // Step 1: check the customer exists at all
     const customer = await this.prisma.customer.findUnique({
       where: { id },
     });
@@ -124,11 +120,36 @@ export class CustomersService {
       throw new NotFoundException(`Customer with id ${id} not found`);
     }
 
+    // Step 2: ADMIN sees any customer — no further check needed
+    if (userRole === RoleName.ADMIN) {
+      return customer;
+    }
+
+    // Step 3: STAFF must have an active assignment to a conversation
+    // belonging to this customer — same rule as findAll
+    const assigned = await this.prisma.assignment.findFirst({
+      where: {
+        assignedToId: userId,
+        unassignedAt: null,
+        conversation: {
+          customerId: id,
+        },
+      },
+    });
+
+    if (!assigned) {
+      throw new ForbiddenException(
+        'You do not have an active assignment for this customer',
+      );
+    }
+
     return customer;
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
-    await this.findOne(id);
+    // update/delete remain ADMIN-only via controller @Roles('ADMIN')
+    // so no role check needed here
+    await this.findOne(id, '', RoleName.ADMIN);
 
     if (dto.email) {
       const existingEmail = await this.prisma.customer.findFirst({
@@ -159,7 +180,7 @@ export class CustomersService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    await this.findOne(id, '', RoleName.ADMIN);
 
     await this.prisma.customer.delete({
       where: { id },
