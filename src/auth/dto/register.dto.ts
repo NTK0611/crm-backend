@@ -4,6 +4,8 @@ import {
   IsString,
   MinLength,
   MaxLength,
+  IsOptional,
+  IsIn,
 } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -25,4 +27,17 @@ export class RegisterDto {
   @IsString()
   @MaxLength(255)
   fullName: string;
+
+  @ApiProperty({
+    example: 'STAFF',
+    description: 'Role to assign: ADMIN, STAFF, or CUSTOMER. Defaults to STAFF if omitted.',
+    enum: ['ADMIN', 'STAFF', 'CUSTOMER'],
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @IsIn(['ADMIN', 'STAFF', 'CUSTOMER'], {
+    message: 'role must be one of: ADMIN, STAFF, CUSTOMER',
+  })
+  role?: string;
 }

@@ -5,15 +5,22 @@ import {
   Body,
   Param,
   ParseUUIDPipe,
+  UseInterceptors,
+  UploadedFile,
   UseGuards,
   Request,
+  Query,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiBearerAuth,
   ApiOperation,
   ApiResponse,
   ApiTags,
+  ApiConsumes,
+  ApiBody,
 } from '@nestjs/swagger';
+import { memoryStorageConfig, fileTypeFilter, MAX_FILE_SIZE } from '../common/utils/file-upload.utils';
 import { ConversationsService } from './conversations.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { CreateMessageDto } from './dto/create-message.dto';
@@ -21,6 +28,8 @@ import { AssignConversationDto } from './dto/assign-conversation.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
+import { QueryConversationDto } from './dto/query-conversation.dto';
+import { RoleName } from '@prisma/client';
 
 @ApiTags('Conversations')
 @ApiBearerAuth('JWT')
@@ -29,22 +38,30 @@ import { Roles } from '../auth/decorators/roles.decorator';
 export class ConversationsController {
   constructor(private readonly conversationsService: ConversationsService) {}
 
+  // ─── Create Conversation ──────────────────────────────────────────
   @Post()
-  @ApiOperation({ summary: 'Create a new conversation' })
+  @UseGuards(RolesGuard)
+  @Roles('ADMIN', 'STAFF')
+  @ApiOperation({ summary: 'Create a new conversation (ADMIN, STAFF only)' })
+  @ApiResponse({ status: 201, description: 'Conversation created' })
+  @ApiResponse({ status: 403, description: 'CUSTOMER role cannot create conversations' })
   async create(@Body() dto: CreateConversationDto, @Request() req) {
     return this.conversationsService.create(dto, req.user.id);
   }
 
+  // ─── List Conversations ───────────────────────────────────────────
   @Get()
-  @ApiOperation({ summary: 'Get all conversations for current user' })
-  async findAll(@Request() req) {
-    return this.conversationsService.findAll(req.user.id);
+  @ApiOperation({ summary: 'Get conversations — ADMIN sees all, STAFF/CUSTOMER sees own' })
+  async findAll(@Query() query: QueryConversationDto, @Request() req) {
+    const userRole = req.user.userRoles?.[0]?.role?.name as RoleName ?? RoleName.STAFF;
+    return this.conversationsService.findAll(req.user.id, userRole, query);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Get one conversation by ID' })
   async findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
-    return this.conversationsService.findOne(id, req.user.id);
+    const userRole = req.user.userRoles?.[0]?.role?.name as RoleName ?? RoleName.STAFF;
+    return this.conversationsService.findOne(id, req.user.id, userRole);
   }
 
   @Post(':id/messages')
@@ -66,23 +83,19 @@ export class ConversationsController {
     return this.conversationsService.findMessages(id, req.user.id);
   }
 
-  // ─── Assignment & Status (Challenge 6) ──────────────────────────────
+  // ─── Assignment & Status ───────────────────────────────────────────
   @Post(':id/pending')
   @UseGuards(RolesGuard)
   @Roles('ADMIN', 'STAFF')
-  @ApiOperation({ summary: 'Set a conversation to pending (no staff available)' })
+  @ApiOperation({ summary: 'Set a conversation to pending' })
   @ApiResponse({ status: 200, description: 'Conversation set to pending' })
   @ApiResponse({ status: 403, description: 'Insufficient role' })
   @ApiResponse({ status: 404, description: 'Conversation not found' })
   @ApiResponse({ status: 409, description: 'Invalid status transition' })
-  async pending(
-  @Param('id', ParseUUIDPipe) id: string,
-  @Request() req,
-  ) {
-  const data = await this.conversationsService.pending(id, req.user.id);
-  return { message: 'Conversation set to pending successfully', data };
+  async pending(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    const data = await this.conversationsService.pending(id, req.user.id);
+    return { message: 'Conversation set to pending successfully', data };
   }
-
 
   @Post(':id/assign')
   @UseGuards(RolesGuard)
@@ -91,8 +104,7 @@ export class ConversationsController {
   @ApiResponse({ status: 200, description: 'Conversation assigned' })
   @ApiResponse({ status: 403, description: 'Insufficient role' })
   @ApiResponse({ status: 404, description: 'Conversation not found' })
-  @ApiResponse({ status: 409, description: 'Invalid status transition' }
-  )
+  @ApiResponse({ status: 409, description: 'Invalid status transition' })
   async assign(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AssignConversationDto,
@@ -139,5 +151,46 @@ export class ConversationsController {
   async reopen(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
     const data = await this.conversationsService.reopen(id, req.user.id);
     return { message: 'Conversation reopened successfully', data };
+  }
+
+  // ─── Message with Attachment ───────────────────────────────────────
+  @Post(':id/messages/with-attachment')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorageConfig,
+      // Memory storage keeps the file in file.buffer — no disk write.
+      // Buffer is streamed directly to Cloudinary in AttachmentsService.
+      fileFilter: fileTypeFilter,
+      limits: { fileSize: MAX_FILE_SIZE },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Send a message with a file attachment' })
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file', 'content'],
+      properties: {
+        file: { type: 'string', format: 'binary' },
+        content: { type: 'string' },
+      },
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Message with attachment created' })
+  @ApiResponse({ status: 400, description: 'Invalid file type or missing file' })
+  @ApiResponse({ status: 403, description: 'Not a member of this conversation' })
+  @ApiResponse({ status: 413, description: 'File too large' })
+  async createMessageWithAttachment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body('content') content: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Request() req,
+  ) {
+    return this.conversationsService.createMessageWithAttachment(
+      id,
+      content,
+      file,
+      req.user.id,
+    );
   }
 }

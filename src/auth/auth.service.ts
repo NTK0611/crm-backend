@@ -2,6 +2,7 @@ import {
   Injectable,
   ConflictException,
   UnauthorizedException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -9,7 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import * as bcrypt from 'bcrypt';
-
+import { RoleName } from '@prisma/client';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -32,41 +33,50 @@ export class AuthService {
     // Hash password
     const passwordHash = await bcrypt.hash(dto.password, 10);
 
-    // Create user
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        passwordHash,
-        fullName: dto.fullName,
-      },
+    // Determine role — default to STAFF if not provided
+    const roleName = dto.role ?? 'STAFF' as RoleName;
+
+    // Find the role in DB
+    const role = await this.prisma.role.findUnique({
+      where: { name: roleName as RoleName },
     });
 
-    // Assign default STAFF role
-    const staffRole = await this.prisma.role.findUnique({
-      where: { name: 'STAFF' },
-    });
-
-    if (staffRole) {
-      await this.prisma.userRole.create({
-        data: {
-          userId: user.id,
-          roleId: staffRole.id,
-        },
-      });
+    if (!role) {
+      throw new BadRequestException(`Role '${roleName}' does not exist in the system`);
     }
 
-    this.logger.log(`New user registered: ${user.email}`);
+    // Create user and assign role in one transaction
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email: dto.email,
+          passwordHash,
+          fullName: dto.fullName,
+        },
+      });
+
+      await tx.userRole.create({
+        data: {
+          userId: created.id,
+          roleId: role.id,
+        },
+      });
+
+      return created;
+    });
+
+    this.logger.log(`New user registered: ${user.email} with role: ${roleName}`);
 
     return {
       id: user.id,
       email: user.email,
       fullName: user.fullName,
+      role: roleName,
       createdAt: user.createdAt,
     };
   }
 
   async login(dto: LoginDto) {
-    // Find user by email
     const user = await this.prisma.user.findUnique({
       where: { email: dto.email },
       include: {
@@ -78,13 +88,11 @@ export class AuthService {
       },
     });
 
-    // User not found or password wrong — same error message for security
     if (!user) {
       this.logger.warn(`Failed login attempt for email: ${dto.email} - user not found`);
       throw new UnauthorizedException('Invalid email or password');
     }
 
-    // Compare password
     const isPasswordValid = await bcrypt.compare(dto.password, user.passwordHash);
 
     if (!isPasswordValid) {
@@ -97,10 +105,8 @@ export class AuthService {
       throw new UnauthorizedException('Account is inactive');
     }
 
-    // Get user role
     const role = user.userRoles[0]?.role?.name ?? 'STAFF';
 
-    // Generate JWT
     const payload = {
       sub: user.id,
       email: user.email,

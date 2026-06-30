@@ -2,12 +2,14 @@ import {
   Injectable,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
   Logger,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 import { QueryCustomerDto } from './dto/query-customer.dto';
+import { RoleName } from '@prisma/client';
 
 @Injectable()
 export class CustomersService {
@@ -16,7 +18,6 @@ export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async create(dto: CreateCustomerDto, userId: string) {
-    // Check duplicate email
     if (dto.email) {
       const existingEmail = await this.prisma.customer.findUnique({
         where: { email: dto.email },
@@ -26,7 +27,6 @@ export class CustomersService {
       }
     }
 
-    // Check duplicate phone
     if (dto.phone) {
       const existingPhone = await this.prisma.customer.findUnique({
         where: { phone: dto.phone },
@@ -42,24 +42,27 @@ export class CustomersService {
 
     this.logger.log(`Customer created: ${customer.id}`);
 
-    // Activity log
     await this.prisma.activityLog.create({
-       data: {
+      data: {
         conversationId: null,
         userId,
         action: 'CUSTOMER_CREATED',
         meta: { customerId: customer.id, name: customer.name },
       },
-    })
+    });
 
     return customer;
   }
 
-  async findAll(query: QueryCustomerDto) {
+  async findAll(query: QueryCustomerDto, userId: string, userRole: RoleName) {
+    if (userRole === RoleName.CUSTOMER) {
+      throw new ForbiddenException('Access denied');
+    }
+
     const { search, status, page = 1, limit = 10 } = query;
     const skip = (page - 1) * limit;
 
-    const where = {
+    const baseWhere = {
       ...(status && { status }),
       ...(search && {
         OR: [
@@ -68,6 +71,23 @@ export class CustomersService {
         ],
       }),
     };
+
+    const where =
+      userRole === RoleName.ADMIN
+        ? baseWhere
+        : {
+            ...baseWhere,
+            conversations: {
+              some: {
+                assignments: {
+                  some: {
+                    assignedToId: userId,
+                    unassignedAt: null,
+                  },
+                },
+              },
+            },
+          };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.customer.findMany({
@@ -90,7 +110,8 @@ export class CustomersService {
     };
   }
 
-  async findOne(id: string) {
+  async findOne(id: string, userId: string, userRole: RoleName) {
+    // Step 1: check the customer exists at all
     const customer = await this.prisma.customer.findUnique({
       where: { id },
     });
@@ -99,14 +120,37 @@ export class CustomersService {
       throw new NotFoundException(`Customer with id ${id} not found`);
     }
 
+    // Step 2: ADMIN sees any customer — no further check needed
+    if (userRole === RoleName.ADMIN) {
+      return customer;
+    }
+
+    // Step 3: STAFF must have an active assignment to a conversation
+    // belonging to this customer — same rule as findAll
+    const assigned = await this.prisma.assignment.findFirst({
+      where: {
+        assignedToId: userId,
+        unassignedAt: null,
+        conversation: {
+          customerId: id,
+        },
+      },
+    });
+
+    if (!assigned) {
+      throw new ForbiddenException(
+        'You do not have an active assignment for this customer',
+      );
+    }
+
     return customer;
   }
 
   async update(id: string, dto: UpdateCustomerDto) {
-    // Check customer exists
-    await this.findOne(id);
+    // update/delete remain ADMIN-only via controller @Roles('ADMIN')
+    // so no role check needed here
+    await this.findOne(id, '', RoleName.ADMIN);
 
-    // Check duplicate email
     if (dto.email) {
       const existingEmail = await this.prisma.customer.findFirst({
         where: { email: dto.email, NOT: { id } },
@@ -116,7 +160,6 @@ export class CustomersService {
       }
     }
 
-    // Check duplicate phone
     if (dto.phone) {
       const existingPhone = await this.prisma.customer.findFirst({
         where: { phone: dto.phone, NOT: { id } },
@@ -137,7 +180,7 @@ export class CustomersService {
   }
 
   async remove(id: string) {
-    await this.findOne(id);
+    await this.findOne(id, '', RoleName.ADMIN);
 
     await this.prisma.customer.delete({
       where: { id },

@@ -21,6 +21,7 @@ enum ConversationStatus {
 enum SenderType {
   USER
   CUSTOMER
+  
 }
 
 enum WebhookStatus {
@@ -101,6 +102,9 @@ model Customer {
   conversations Conversation[]
 
   @@map("customers")
+  @@index([name])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model Conversation {
@@ -183,6 +187,7 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isRead])
+  @@unique([userId, referenceId])
   @@map("notifications")
 }
 
